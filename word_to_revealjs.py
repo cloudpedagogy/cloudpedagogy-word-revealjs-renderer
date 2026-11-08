@@ -47,11 +47,13 @@ Supported metatags in Word:
 from __future__ import annotations
 
 import argparse
+import glob
 import html
 import mimetypes
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, List, Optional
@@ -293,7 +295,7 @@ r[style-name='Verbatim Char'] => code
 
 
 YOUTUBE_PATTERNS = [
-    re.compile(r"https?://(?:www\.)?youtube\.com/watch\?v=([A-Za-z0-9_-]+)"),
+    re.compile(r"https?://(?:www\.)?youtube\.com/watch\?(?:[^\"'>\s]*&)?v=([A-Za-z0-9_-]+)"),
     re.compile(r"https?://youtu\.be/([A-Za-z0-9_-]+)"),
     re.compile(r"https?://(?:www\.)?youtube\.com/embed/([A-Za-z0-9_-]+)"),
 ]
@@ -305,6 +307,16 @@ def youtube_embed_url(url: str) -> Optional[str]:
         match = pattern.search(url)
         if match:
             return f"https://www.youtube.com/embed/{match.group(1)}"
+    try:
+        parsed = urlparse(url)
+        if "youtube.com" in (parsed.netloc or ""):
+            qs = parse_qs(parsed.query)
+            if "v" in qs and qs["v"]:
+                vid = qs["v"][0]
+                if re.match(r"^[A-Za-z0-9_-]+$", vid):
+                    return f"https://www.youtube.com/embed/{vid}"
+    except Exception:
+        pass
     return None
 
 
@@ -324,6 +336,10 @@ def panopto_embed_url(url: str) -> Optional[str]:
     url = html.unescape(url.strip().strip("<>"))
 
     if not extract_panopto_id(url):
+        return None
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
         return None
 
     if "/Pages/Viewer.aspx" in url:
@@ -376,7 +392,11 @@ def panopto_iframe_block(url: str) -> str:
 
 
 def iframe_block(url: str) -> str:
-    safe_url = html.escape(html.unescape(url.strip().strip("<>")), quote=True)
+    cleaned = html.unescape(url.strip().strip("<>"))
+    parsed = urlparse(cleaned)
+    if parsed.scheme not in ("http", "https"):
+        return f"<p>Invalid iframe URL: {html.escape(url)}</p>"
+    safe_url = html.escape(cleaned, quote=True)
     iframe = f"""
 <iframe
   src="{safe_url}"
@@ -392,7 +412,7 @@ def iframe_block(url: str) -> str:
 def process_metatags(qmd_text: str) -> str:
     text = qmd_text
 
-        # Original bracket-style tags
+    # Original bracket-style tags (plain text)
 
     text = re.sub(
         r"<p>\s*\[YOUTUBE\]\s*</p>\s*<p>\s*(https?://[^<\s]+)\s*</p>",
@@ -409,6 +429,20 @@ def process_metatags(qmd_text: str) -> str:
     )
 
     text = re.sub(
+        r"<p>\s*\[PANOPTO\]\s*</p>\s*<p>\s*(https?://[^<\s]+)\s*</p>",
+        lambda m: panopto_iframe_block(m.group(1)),
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    text = re.sub(
+        r"<p>\s*\[PANOPTO\]\s*(https?://[^<\s]+)\s*</p>",
+        lambda m: panopto_iframe_block(m.group(1)),
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    text = re.sub(
         r"<p>\s*\[IFRAME\]\s*</p>\s*<p>\s*(https?://[^<\s]+)\s*</p>",
         lambda m: iframe_block(m.group(1)),
         text,
@@ -420,6 +454,50 @@ def process_metatags(qmd_text: str) -> str:
         lambda m: iframe_block(m.group(1)),
         text,
         flags=re.IGNORECASE,
+    )
+
+    # Bracket-style tags: Mammoth hyperlink forms
+
+    text = re.sub(
+        r'<p>\s*\[YOUTUBE\]\s*</p>\s*<p>\s*<a href="([^"]+)">.*?</a>\s*(?:<br\s*/?>)?\s*</p>',
+        lambda m: youtube_iframe_block(m.group(1)),
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    text = re.sub(
+        r'<p>\s*\[YOUTUBE\]\s*<a href="([^"]+)">.*?</a>\s*(?:<br\s*/?>)?\s*</p>',
+        lambda m: youtube_iframe_block(m.group(1)),
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    text = re.sub(
+        r'<p>\s*\[PANOPTO\]\s*</p>\s*<p>\s*<a href="([^"]+)">.*?</a>\s*(?:<br\s*/?>)?\s*</p>',
+        lambda m: panopto_iframe_block(m.group(1)),
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    text = re.sub(
+        r'<p>\s*\[PANOPTO\]\s*<a href="([^"]+)">.*?</a>\s*(?:<br\s*/?>)?\s*</p>',
+        lambda m: panopto_iframe_block(m.group(1)),
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    text = re.sub(
+        r'<p>\s*\[IFRAME\]\s*</p>\s*<p>\s*<a href="([^"]+)">.*?</a>\s*(?:<br\s*/?>)?\s*</p>',
+        lambda m: iframe_block(m.group(1)),
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    text = re.sub(
+        r'<p>\s*\[IFRAME\]\s*<a href="([^"]+)">.*?</a>\s*(?:<br\s*/?>)?\s*</p>',
+        lambda m: iframe_block(m.group(1)),
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
     )
 
     # Simple text forms
@@ -590,7 +668,22 @@ def write_qa_report(doc: SourceDoc, out_dir: Path, qmd_path: Path) -> None:
 
 
 def render_quarto(qmd_path: Path) -> None:
-    subprocess.run(["quarto", "render", str(qmd_path)], check=True)
+    if not shutil.which("quarto"):
+        raise RuntimeError(
+            "Quarto is required for HTML rendering but was not found in system PATH. "
+            "Install Quarto from https://quarto.org/ and ensure it is available in your PATH."
+        )
+    try:
+        subprocess.run(
+            ["quarto", "render", qmd_path.name],
+            cwd=str(qmd_path.parent),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        err = e.stderr.strip() if e.stderr else (e.stdout.strip() if e.stdout else f"exit status {e.returncode}")
+        raise RuntimeError(f"Quarto render failed for {qmd_path.name}: {err}") from None
 
 
 def write_reveal_output(doc: SourceDoc, output_root: Path, media_work_root: Path, theme: str, render: bool) -> Path:
@@ -637,16 +730,21 @@ def main() -> None:
     output_root.mkdir(parents=True, exist_ok=True)
     media_work_root.mkdir(parents=True, exist_ok=True)
 
+    if Path(args.input_glob).is_absolute():
+        raw_candidates = [Path(p) for p in glob.glob(args.input_glob, recursive=True)]
+    else:
+        raw_candidates = list(cwd.glob(args.input_glob))
+
     candidates = [
-        p for p in sorted(cwd.glob(args.input_glob))
+        p.resolve() for p in sorted(raw_candidates)
         if not p.name.startswith("~$") and p.suffix.lower() == ".docx"
     ]
 
     if not candidates:
-        print("No DOCX files found.")
-        print(f"Input glob: {args.input_glob}")
-        print("Expected location example: imports/presentations/MySlides.docx")
-        return
+        print("No DOCX files found.", file=sys.stderr)
+        print(f"Input glob: {args.input_glob}", file=sys.stderr)
+        print("Expected location example: imports/presentations/MySlides.docx", file=sys.stderr)
+        sys.exit(1)
 
     qmd_paths: List[Path] = []
     try:
@@ -669,6 +767,9 @@ def main() -> None:
         if not args.render:
             print("\nRender example:")
             print(f"  quarto render \"{qmd_paths[0]}\"")
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
     finally:
         if media_work_root.exists():
             shutil.rmtree(media_work_root)

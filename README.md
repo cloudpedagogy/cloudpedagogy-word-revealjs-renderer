@@ -190,7 +190,7 @@ Expected summary:
 
 ```text
 Title: Introduction to Vaccine Effectiveness
-Slides: 8
+Slides: 7
 Images: 1
 ```
 

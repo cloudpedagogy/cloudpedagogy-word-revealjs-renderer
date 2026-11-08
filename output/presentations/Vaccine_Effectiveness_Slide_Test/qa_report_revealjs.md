@@ -6,8 +6,8 @@ QMD file: `Vaccine_Effectiveness_Slide_Test_slides.qmd`
 
 ## Summary
 
-- Slides generated: 8
-- Semantic headings detected: 9
+- Slides generated: 7
+- Semantic headings detected: 8
 - Images extracted: 1
 
 ## Slides generated
@@ -15,7 +15,6 @@ QMD file: `Vaccine_Effectiveness_Slide_Test_slides.qmd`
 - What is Vaccine Effectiveness? (1 content elements)
 - Image of vaccine (4 content elements)
 - Youtube (1 content elements)
-- Panopto (1 content elements)
 - Why Does Vaccine Effectiveness Matter? (1 content elements)
 - Outbreak Investigation Example (1 content elements)
 - Calculating Vaccine Effectiveness (1 content elements)
@@ -27,7 +26,6 @@ QMD file: `Vaccine_Effectiveness_Slide_Test_slides.qmd`
 - H2: What is Vaccine Effectiveness?
 - H2: Image of vaccine
 - H2: Youtube
-- H2: Panopto
 - H2: Why Does Vaccine Effectiveness Matter?
 - H2: Outbreak Investigation Example
 - H2: Calculating Vaccine Effectiveness
